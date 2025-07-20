@@ -282,12 +282,15 @@ async function executeSwap(wallet, routeData, fromAddr, amount) {
       throw new Error('Data transaksi tidak valid dari API DODO');
     }
 
+    logger.info(`Mengeksekusi swap: ke=${routeData.to}, nilai=${routeData.value}, gasLimit=${routeData.gasLimit || 'default'}`);
+    logger.info(`Data transaksi: ${routeData.data.substring(0, 100)}...`); // Log sebagian data untuk verifikasi
+
     // Kirim transaksi swap
     const tx = await wallet.sendTransaction({
       to: routeData.to,
       data: routeData.data,
       value: BigInt(routeData.value), // Nilai untuk transfer token asli
-      gasLimit: BigInt(routeData.gasLimit || 500000) // Gunakan gasLimit dari routeData atau default
+      gasLimit: BigInt(routeData.gasLimit || 800000) // Meningkatkan gasLimit default menjadi 800.000
     });
     logger.success(`Transaksi Swap dikirim! Hash TX: ${tx.hash}`);
     await tx.wait(); // Tunggu konfirmasi transaksi
@@ -317,12 +320,26 @@ async function batchSwap(wallet, count) {
   for (let i = 0; i < swaps.length; i++) {
     const { from, to, amount, decimals } = swaps[i];
     const pair = from === TOKENS.PHRS ? 'PHRS -> USDT' : 'USDT -> PHRS';
-    logger.step(`Swap #${i + 1} dari ${count}: ${pair}`);
+    logger.section(`Memulai Swap #${i + 1} dari ${count}: ${pair}`);
+
     try {
+      // Log saldo dan allowance sebelum setiap swap
+      const phrsBalance = await wallet.provider.getBalance(wallet.address);
+      logger.info(`Saldo PHRS dompet: ${ethers.formatEther(phrsBalance)} PHRS`);
+
+      if (from === TOKENS.USDT) {
+        const usdtContract = new ethers.Contract(TOKENS.USDT, ERC20_ABI, wallet.provider);
+        const usdtBalance = await usdtContract.balanceOf(wallet.address);
+        const usdtAllowance = await usdtContract.allowance(wallet.address, DODO_ROUTER);
+        logger.info(`Saldo USDT dompet: ${ethers.formatUnits(usdtBalance, 6)} USDT`);
+        logger.info(`Allowance USDT untuk DODO Router: ${ethers.formatUnits(usdtAllowance, 6)} USDT`);
+      }
+
       const data = await fetchDodoRoute(from, to, wallet.address, amount);
       await executeSwap(wallet, data, from, amount);
+      logger.summary(`Swap #${i + 1} (${pair}) berhasil.`);
     } catch (e) {
-      logger.error(`Swap #${i + 1} gagal: ${e.message}`);
+      logger.error(`Swap #${i + 1} (${pair}) gagal: ${e.message}`);
     }
     await new Promise(r => setTimeout(r, 2000)); // Penundaan singkat antar swap
   }
